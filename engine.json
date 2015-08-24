@@ -1,0 +1,21 @@
+{
+  "id": "default",
+  "description": "Default settings",
+  "engineFactory": "org.template.classification.ClassificationEngine",
+  "datasource": {
+    "params": {
+      "appName": "LDA"
+    }
+  },
+  "algorithms": [
+    {
+      "name": "LDA",
+      "params": {
+        "numTopics" : 5,
+        "maxIter": 200,
+        "docConcentration": -1.0,
+        "topicConcentration": -1.0
+      }
+    }
+  ]
+}
