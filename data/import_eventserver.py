@@ -11,8 +11,6 @@ def import_events(client, file):
   print "Importing data..."
   for line in f:
     text = line.rstrip('\r\n')
-  
-    #Not strictly CSV, after the first comma, no longer delimiting
  
     client.create_event(
       event="$set",
