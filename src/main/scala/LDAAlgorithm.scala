@@ -52,8 +52,7 @@ class LDAAlgorithm(val ap: AlgorithmParams)
 
     LDAModelWithCorpusAndVocab(ldaModel, dataStrings zip corpus, vocab, sc)
   }
-
-  //For now we can only return topic distributions for documents that appeared in the training set
+ 
   def predict(ldaModelAndCorpus: LDAModelWithCorpusAndVocab, query: Query): PredictedResult = {
     val topics = ldaModelAndCorpus.ldaModel.describeTopics(10)
     val topicDists = ldaModelAndCorpus.ldaModel.topicDistributions
