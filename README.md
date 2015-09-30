@@ -1,6 +1,6 @@
 # Topic Modeling Template - LDA
 
-This template requires spark >= 1.4.0.
+This template requires spark >= 1.5.1.
 
 Input data is plain text, in data/data.txt , one line per LDA "document".
 
