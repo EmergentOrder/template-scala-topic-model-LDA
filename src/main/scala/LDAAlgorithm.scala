@@ -12,10 +12,16 @@ import java.nio.file.{Files, Paths}
 import org.apache.spark.mllib.clustering.{DistributedLDAModel, LDAModel, LDA}
 import org.apache.spark.rdd.RDD
 
+import breeze.linalg.{DenseMatrix => BDM, argtopk, max, argmax}
+import breeze.linalg.DenseVector
+
+import org.apache.spark.mllib.linalg.{DenseMatrix, Matrix, Vector, Vectors}
+
 case class LDAModelWithCorpusAndVocab(
                                ldaModel: DistributedLDAModel,
                                corpus: RDD[(String, (Long,Vector))],
-                               vocab : Map[String,Int]
+                               vocab : Map[String,Int],
+                               sc: SparkContext
                                )
 
 case class AlgorithmParams(
@@ -44,7 +50,7 @@ class LDAAlgorithm(val ap: AlgorithmParams)
     val ldaModel = new LDA().setSeed(13457).setK(ap.numTopics).setMaxIterations(ap.maxIter).run(corpus)
       .asInstanceOf[DistributedLDAModel]
 
-    LDAModelWithCorpusAndVocab(ldaModel, dataStrings zip corpus, vocab)
+    LDAModelWithCorpusAndVocab(ldaModel, dataStrings zip corpus, vocab, sc)
   }
 
   //For now we can only return topic distributions for documents that appeared in the training set
@@ -53,7 +59,7 @@ class LDAAlgorithm(val ap: AlgorithmParams)
     val topicDists = ldaModelAndCorpus.ldaModel.topicDistributions
     val corpusMap =ldaModelAndCorpus.corpus.collect().toMap
 
-    val maxTopicIndex: Int = getMaxTopicIndex(query, topicDists, corpusMap)
+    val maxTopicIndex: Int = getMaxTopicIndex(ldaModelAndCorpus.sc, query, ldaModelAndCorpus.ldaModel)
     val swappedMap = ldaModelAndCorpus.vocab.map(_.swap)
     val topicResults = for( ((indices, weights), outerIndex) <- topics zipWithIndex)
                        yield {outerIndex -> (indices map (x => swappedMap(x)) zip weights)
@@ -65,17 +71,21 @@ class LDAAlgorithm(val ap: AlgorithmParams)
     new PredictedResult(topTopic, topicResults)
   }
 
-  def getMaxTopicIndex(query: Query, topicDists: RDD[(Long, Vector)],
-                       corpusMap: Map[String, (Long, Vector)]): Int = {
-    val (queryDocId, queryVec) = corpusMap.getOrElse(query.text.trim, throw new scala.Exception
-    ("Can't find document"))
+  def getMaxTopicIndex(sc:SparkContext, query: Query, ldaModel: DistributedLDAModel): Int = {
 
-    val queryTopics = for ((index, vec) <- topicDists if index.equals(queryDocId)) yield vec
+    val text = query.text.trim
 
-    val queryTopicsArray = queryTopics.first().toArray
-    val maxTopic = queryTopicsArray.max
-    val maxTopicIndex = queryTopicsArray.indexOf(maxTopic)
-    maxTopicIndex
+    val (corpus, vocab) = makeDocuments(sc.parallelize(Array(text)))
+
+    val actualPredictions = ldaModel.toLocal.topicDistributions(corpus).map { case (id, topics) =>
+      // convert results to expectedPredictions format, which only has highest probability topic
+      val topicsBz = new DenseVector(topics.toArray)
+       (id, (argmax(topicsBz), max(topicsBz)))
+    }.sortByKey()
+    .values
+    .collect()
+
+    actualPredictions.head._1
   }
 
 
@@ -91,7 +101,7 @@ class LDAAlgorithm(val ap: AlgorithmParams)
     val termCounts: Array[(String, Long)] =
       tokenized.flatMap(_.map(_ -> 1L)).reduceByKey(_ + _).collect().sortBy(-_._2)
     //   vocabArray: Chosen vocab (removing common terms)
-    val numStopwords = 50
+    val numStopwords = termCounts.size / 10
     val vocabArray: Array[String] =
       termCounts.takeRight(termCounts.size - numStopwords).map(_._1)
     //   vocab: Map term -> term index
