@@ -1,6 +1,8 @@
 package org.template.classification
 
 import io.prediction.controller.{PAlgorithm, Params}
+import io.prediction.controller.{IPersistentModel, IPersistentModelLoader}
+
 
 import org.apache.spark.mllib.linalg.Vectors
 import org.apache.spark.{SparkConf, SparkContext}
@@ -22,7 +24,28 @@ case class LDAModelWithCorpusAndVocab(
                                corpus: RDD[(String, (Long,Vector))],
                                vocab : Map[String,Int],
                                sc: SparkContext
-                               )
+                               ) extends IPersistentModel[AlgorithmParams] with Serializable {
+  def save(id: String, params: AlgorithmParams,
+    sc: SparkContext): Boolean = { 
+      ldaModel.save(sc, s"/tmp/${id}/ldaModel")
+      corpus.saveAsObjectFile(s"/tmp/${id}/ldaCorpus")
+      sc.parallelize(Seq(vocab)).saveAsObjectFile(s"/tmp/${id}/ldaVocab")
+      true
+  }
+}
+
+object LDAModelWithCorpusAndVocab
+  extends IPersistentModelLoader[AlgorithmParams, LDAModelWithCorpusAndVocab] {
+  def apply(id: String, params: AlgorithmParams,
+    sc: Option[SparkContext]) = {
+    new LDAModelWithCorpusAndVocab(
+      DistributedLDAModel.load(sc.get, s"/tmp/${id}/ldaModel"),
+      sc.get.objectFile(s"/tmp/${id}/ldaCorpus"),
+      sc.get.objectFile[Map[String,Int]](s"/tmp/${id}/ldaVocab").first,
+      sc.get
+      )      
+  }
+ }
 
 case class AlgorithmParams(
   numTopics: Int,
@@ -39,7 +62,6 @@ class LDAAlgorithm(val ap: AlgorithmParams)
   @transient lazy val logger = Logger[this.type]
 
   def train(sc: SparkContext, data: PreparedData): LDAModelWithCorpusAndVocab = {
-   
     require(!data.points.take(1).isEmpty,
       s"RDD[labeldPoints] in PreparedData cannot be empty." +
       " Please check if DataSource generates TrainingData" +
@@ -50,10 +72,10 @@ class LDAAlgorithm(val ap: AlgorithmParams)
     val ldaModel = new LDA().setSeed(13457).setK(ap.numTopics).setMaxIterations(ap.maxIter).run(corpus)
       .asInstanceOf[DistributedLDAModel]
 
-    LDAModelWithCorpusAndVocab(ldaModel, dataStrings zip corpus, vocab, sc)
+    new LDAModelWithCorpusAndVocab(ldaModel, dataStrings zip corpus, vocab, sc)
   }
  
-  def predict(ldaModelAndCorpus: LDAModelWithCorpusAndVocab, query: Query): PredictedResult = {
+  def predict(ldaModelAndCorpus: LDAModelWithCorpusAndVocab, query: Query): PredictedResult = { 
     val topics = ldaModelAndCorpus.ldaModel.describeTopics(10)
     val topicDists = ldaModelAndCorpus.ldaModel.topicDistributions
     val corpusMap =ldaModelAndCorpus.corpus.collect().toMap
